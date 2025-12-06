@@ -53,7 +53,7 @@ func (redis *Redis) KeyCount() int {
 		 return -1
 	}
 	return dbsize;
-} 
+}
 type RedisScanReply struct {
 	cursor int
 	keys   []string
@@ -120,6 +120,7 @@ func (redis *Redis) LoadZones() {
 	redis.LastZoneUpdate = time.Now()
 	redis.lastKeyCount = redis.KeyCount()
 	redis.Zones = zones
+  log.Debugf("zones loaded: %v", zones)
 }
 
 func (redis *Redis) A(name string, z *Zone, record *Record) (answers, extras []dns.RR) {
@@ -295,14 +296,12 @@ func (redis *Redis) CAA(name string, z *Zone, record *Record) (answers, extras [
 	return
 }
 
-func (redis *Redis) AXFR(z *Zone) (records []dns.RR) {
-	//soa, _ := redis.SOA(z.Name, z, record)
+func (redis *Redis) AXFR(z *Zone) ([]dns.RR) {
 	soa := make([]dns.RR, 0)
 	answers := make([]dns.RR, 0, 10)
 	extras := make([]dns.RR, 0, 10)
 
 	// Allocate slices for rr Records
-	records = append(records, soa...)
 	for key := range z.Locations {
 		if key == "@" {
 			location := redis.findLocation(z.Name, z)
@@ -343,13 +342,13 @@ func (redis *Redis) AXFR(z *Zone) (records []dns.RR) {
 		}
 	}
 
-	records = soa
+	records := soa
 	records = append(records, answers...)
 	records = append(records, extras...)
 	records = append(records, soa...)
 
 	log.Debug(records)
-	return
+	return records
 }
 
 func (redis *Redis) hosts(name string, z *Zone) []dns.RR {

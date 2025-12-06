@@ -1,12 +1,12 @@
 package redis
 
 import (
+	"context"
 	"time"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/request"
 	"github.com/miekg/dns"
-	"golang.org/x/net/context"
 )
 
 // ServeDNS implements the plugin.Handler interface.
@@ -67,8 +67,7 @@ func (redis *Redis) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 		return redis.errorResponse(state, zone, dns.RcodeNameError, nil)
 	}
 
-	answers := make([]dns.RR, 0, 10)
-	extras := make([]dns.RR, 0, 10)
+	var answers, extras []dns.RR
 
 	record := redis.get(location, z)
 	if record == nil {
@@ -116,7 +115,7 @@ func (redis *Redis) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 // Name implements the Handler interface.
 func (redis *Redis) Name() string { return "redis" }
 
-func (redis *Redis) errorResponse(state request.Request, zone string, rcode int, err error) (int, error) {
+func (redis *Redis) errorResponse(state request.Request, _ string, rcode int, err error) (int, error) {
 	m := new(dns.Msg)
 	m.SetRcode(state.Req, rcode)
 	m.Authoritative, m.RecursionAvailable, m.Compress = true, false, true
