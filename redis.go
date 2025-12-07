@@ -89,11 +89,13 @@ func (redis *Redis) LoadZones() {
 	for {
 		reply, err = conn.Do("SCAN", cursor, "MATCH", matchPattern, "COUNT", cursorBatchSize)
 		if err != nil {
+      log.Errorf("failed to start scanning: %v", err)
 			return
 		}
 
 		scanReply, err := decodeScanReply(reply)
 		if err != nil {
+      log.Errorf("failed to decode ScanReply: %v", err)
 			return
 		}
 		cursor = scanReply.cursor
@@ -120,7 +122,7 @@ func (redis *Redis) LoadZones() {
 	redis.LastZoneUpdate = time.Now()
 	redis.lastKeyCount = redis.KeyCount()
 	redis.Zones = zones
-  log.Debugf("zones loaded: %v", zones)
+  log.Debugf("loaded zones: %v", zones)
 }
 
 func (redis *Redis) A(name string, z *Zone, record *Record) (answers, extras []dns.RR) {
