@@ -62,8 +62,8 @@ jobs:
         with:
           # List of images to name
           images: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/coredns-redis
-            ghcr.io/${{ github.repository }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/coredns
+            ghcr.io/${{ github.repository_owner }}/coredns
           # Generate 'latest' tag on master branch, and version tags on releases
           tags: |
             type=ref,event=branch
