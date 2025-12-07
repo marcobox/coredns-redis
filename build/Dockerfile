@@ -13,7 +13,7 @@ RUN git clone https://github.com/coredns/coredns
 
 WORKDIR /app/coredns
 
-COPY ./build/coredns/plugin.cfg .
+COPY ./build/plugin.cfg .
 
 RUN go get github.com/marcobox/coredns-redis
 
