@@ -1,0 +1,51 @@
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add \
+  g++ \
+  git \
+  libcap-setcap \
+  make
+
+
+## First build without the plugin to have most of the normal files in cache.
+RUN git clone https://github.com/coredns/coredns
+
+WORKDIR /app/coredns
+
+RUN go generate && make
+
+## Now re-build with the local plugin included.
+
+COPY ./build/plugin.cfg .
+
+RUN go mod edit -replace github.com/marcobox/coredns-redis=/app/coredns-redis
+
+RUN go generate
+
+COPY . /app/coredns-redis
+
+RUN go get github.com/marcobox/coredns-redis
+
+RUN make
+
+RUN setcap cap_net_bind_service=+ep coredns
+
+RUN cp coredns /coredns
+
+# Set working directory in the container
+WORKDIR /
+
+# Copy the built binary from the builder stage
+COPY ./build/Corefile* .
+COPY ./build/entrypoint.sh .
+
+ENV \
+  COREDNS_REDIS_PREFIX="hostsync/coredns:" \
+  COREDNS_REDIS_DNS_TTL=60 \
+  COREDNS_REDIS_URL="localhost:6379"
+
+EXPOSE 53 53/udp
+
+ENTRYPOINT [ "/entrypoint.sh" ]

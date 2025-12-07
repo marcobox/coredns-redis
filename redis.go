@@ -34,26 +34,27 @@ type Redis struct {
 func (redis *Redis) KeyCount() int {
 	var (
 		reply interface{}
-		err error
+		err   error
 	)
 	conn := redis.Pool.Get()
 	if conn == nil {
 		log.Error("error connecting to redis")
-		return -1;
+		return -1
 	}
 	defer conn.Close()
 	reply, err = conn.Do("DBSIZE")
 	if err != nil {
 		log.Error("error getting dbsize from redis:", err)
-		return -1;
+		return -1
 	}
 	dbsize, err := redisCon.Int(reply, nil)
 	if err != nil {
 		log.Error("error parsing dbsize:", err)
-		 return -1
+		return -1
 	}
-	return dbsize;
+	return dbsize
 }
+
 type RedisScanReply struct {
 	cursor int
 	keys   []string
@@ -89,13 +90,13 @@ func (redis *Redis) LoadZones() {
 	for {
 		reply, err = conn.Do("SCAN", cursor, "MATCH", matchPattern, "COUNT", cursorBatchSize)
 		if err != nil {
-      log.Errorf("failed to start scanning: %v", err)
+			log.Errorf("failed to start scanning: %v", err)
 			return
 		}
 
 		scanReply, err := decodeScanReply(reply)
 		if err != nil {
-      log.Errorf("failed to decode ScanReply: %v", err)
+			log.Errorf("failed to decode ScanReply: %v", err)
 			return
 		}
 		cursor = scanReply.cursor
@@ -122,7 +123,7 @@ func (redis *Redis) LoadZones() {
 	redis.LastZoneUpdate = time.Now()
 	redis.lastKeyCount = redis.KeyCount()
 	redis.Zones = zones
-  log.Debugf("loaded zones: %v", zones)
+	log.Debugf("loaded zones: %v", zones)
 }
 
 func (redis *Redis) A(name string, z *Zone, record *Record) (answers, extras []dns.RR) {
@@ -298,7 +299,7 @@ func (redis *Redis) CAA(name string, z *Zone, record *Record) (answers, extras [
 	return
 }
 
-func (redis *Redis) AXFR(z *Zone) ([]dns.RR) {
+func (redis *Redis) AXFR(z *Zone) []dns.RR {
 	soa := make([]dns.RR, 0)
 	answers := make([]dns.RR, 0, 10)
 	extras := make([]dns.RR, 0, 10)

@@ -1,0 +1,4 @@
+. {
+  import Corefile.base
+  forward . {$COREDNS_FORWARD}
+}

@@ -1,0 +1,13 @@
+log
+errors {
+	stacktrace
+}
+health
+redis {
+    address {$COREDNS_REDIS_URL}
+    password {$COREDNS_REDIS_PASSWORD}
+    prefix {$COREDNS_REDIS_PREFIX}
+    connect_timeout 100
+    read_timeout 100
+    ttl {$COREDNS_REDIS_DNS_TTL}
+}
