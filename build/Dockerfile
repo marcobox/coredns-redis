@@ -15,9 +15,15 @@ WORKDIR /app/coredns
 
 COPY ./build/plugin.cfg .
 
+RUN go mod edit -replace github.com/marcobox/coredns-redis=/app/coredns-redis
+
+RUN go generate
+
+COPY . /app/coredns-redis
+
 RUN go get github.com/marcobox/coredns-redis
 
-RUN go generate && make
+RUN make
 
 RUN setcap cap_net_bind_service=+ep coredns
 
