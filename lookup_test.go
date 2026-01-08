@@ -116,6 +116,25 @@ var testCases = [][]test.Case{
 				test.CNAME("y.example.com. 300 IN CNAME x.example.com."),
 			},
 		},
+		// CNAME resolution - A query on CNAME should return CNAME + A records
+		// Note: SortAndCheck sorts by name, so A records (x.) come before CNAME (y.)
+		{
+			Qname: "y.example.com.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.A("x.example.com. 300 IN A 1.2.3.4"),
+				test.A("x.example.com. 300 IN A 5.6.7.8"),
+				test.CNAME("y.example.com. 300 IN CNAME x.example.com."),
+			},
+		},
+		// CNAME resolution - AAAA query on CNAME should return CNAME + AAAA records
+		// Note: SortAndCheck sorts by name, so AAAA record (x.) comes before CNAME (y.)
+		{
+			Qname: "y.example.com.", Qtype: dns.TypeAAAA,
+			Answer: []dns.RR{
+				test.AAAA("x.example.com. 300 IN AAAA ::1"),
+				test.CNAME("y.example.com. 300 IN CNAME x.example.com."),
+			},
+		},
 		// NS Test
 		{
 			Qname: "x.example.com.", Qtype: dns.TypeNS,
