@@ -11,6 +11,7 @@ import (
 
 // resolveWithCNAME handles A/AAAA queries that may have a CNAME.
 // If a CNAME exists, it returns the CNAME and attempts to resolve the target.
+// It follows CNAME chains within the same zone up to a maximum depth.
 // The resolver function should be either redis.A or redis.AAAA.
 func (redis *Redis) resolveWithCNAME(qname string, z *Zone, record *Record, resolver func(string, *Zone, *Record) ([]dns.RR, []dns.RR)) ([]dns.RR, []dns.RR) {
 	// No CNAME, return the direct A/AAAA records
@@ -18,28 +19,51 @@ func (redis *Redis) resolveWithCNAME(qname string, z *Zone, record *Record, reso
 		return resolver(qname, z, record)
 	}
 
-	// Get CNAME record
-	answers, extras := redis.CNAME(qname, z, record)
-	if len(answers) == 0 {
-		return answers, extras
+	const maxCNAMEDepth = 16 // Prevent infinite loops
+	var answers, extras []dns.RR
+	currentName := qname
+	currentRecord := record
+
+	// Follow CNAME chain
+	for depth := 0; depth < maxCNAMEDepth; depth++ {
+		// Check if current record has a CNAME
+		if len(currentRecord.CNAME) == 0 {
+			// End of chain, resolve the final A/AAAA records
+			targetAnswers, targetExtras := resolver(currentName, z, currentRecord)
+			answers = append(answers, targetAnswers...)
+			extras = append(extras, targetExtras...)
+			return answers, extras
+		}
+
+		// Get CNAME record
+		cnameAnswers, cnameExtras := redis.CNAME(currentName, z, currentRecord)
+		if len(cnameAnswers) == 0 {
+			return answers, extras
+		}
+
+		// Add CNAME to answer chain
+		cname := cnameAnswers[0].(*dns.CNAME)
+		answers = append(answers, cname)
+		extras = append(extras, cnameExtras...)
+
+		// Try to resolve the CNAME target within the same zone
+		targetLocation := redis.findLocation(cname.Target, z)
+		if targetLocation == "" {
+			// CNAME points outside zone, stop here
+			return answers, extras
+		}
+
+		targetRecord := redis.get(targetLocation, z)
+		if targetRecord == nil {
+			return answers, extras
+		}
+
+		// Continue following the chain
+		currentName = cname.Target
+		currentRecord = targetRecord
 	}
 
-	// Try to resolve the CNAME target within the same zone
-	cname := answers[0].(*dns.CNAME)
-	targetLocation := redis.findLocation(cname.Target, z)
-	if targetLocation == "" {
-		return answers, extras
-	}
-
-	targetRecord := redis.get(targetLocation, z)
-	if targetRecord == nil {
-		return answers, extras
-	}
-
-	// Append target's A/AAAA records
-	targetAnswers, targetExtras := resolver(cname.Target, z, targetRecord)
-	answers = append(answers, targetAnswers...)
-	extras = append(extras, targetExtras...)
+	// Hit max depth, return what we have
 	return answers, extras
 }
 

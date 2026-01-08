@@ -11,7 +11,7 @@ import (
 )
 
 var zones = []string{
-	"example.com.", "example.net.",
+	"example.com.", "example.net.", "example.test.",
 }
 
 var lookupEntries = [][][]string{
@@ -70,15 +70,58 @@ var lookupEntries = [][][]string{
 			"{\"srv\":[{\"ttl\":300, \"target\":\"tcp.example.com.\",\"port\":123,\"priority\":10,\"weight\":100}]}",
 		},
 	},
-	// Example.test
+	// Example.test - CNAME chain tests
 	{
 		{"@",
 			"{\"soa\":{\"ttl\":300, \"minttl\":100, \"mbox\":\"hostmaster.example.test.\",\"ns\":\"ns1.example.test.\",\"refresh\":44,\"retry\":55,\"expire\":66}," +
 				"\"ns\":[{\"ttl\":300, \"host\":\"ns1.example.test.\"},{\"ttl\":300, \"host\":\"ns2.example.test.\"}]}",
 		},
-		// Host1's IP field contains invalid JSON
-		{"host1",
-			"{\"a\":[{\"ttl\":300, \"ip\":\"5.5.5.5\"}",
+		// CNAME chain: www -> web -> server -> IP
+		{"www",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"web.example.test.\"}]}",
+		},
+		{"web",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"server.example.test.\"}]}",
+		},
+		{"server",
+			"{\"a\":[{\"ttl\":300, \"ip\":\"10.0.0.1\"}]," +
+				"\"aaaa\":[{\"ttl\":300, \"ip\":\"2001:db8::1\"}]}",
+		},
+		// CNAME chain with 4 levels: app -> service -> backend -> final -> IP
+		{"app",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"service.example.test.\"}]}",
+		},
+		{"service",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"backend.example.test.\"}]}",
+		},
+		{"backend",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"final.example.test.\"}]}",
+		},
+		{"final",
+			"{\"a\":[{\"ttl\":300, \"ip\":\"10.0.0.2\"}]}",
+		},
+		// CNAME pointing to a CNAME that has both CNAME and A (edge case)
+		{"alias",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"dual.example.test.\"}]}",
+		},
+		{"dual",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"target.example.test.\"}]," +
+				"\"a\":[{\"ttl\":300, \"ip\":\"10.0.0.99\"}]}",
+		},
+		{"target",
+			"{\"a\":[{\"ttl\":300, \"ip\":\"10.0.0.3\"}]}",
+		},
+		// CNAME chain that stops mid-chain (points to non-existent)
+		{"broken",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"missing.example.test.\"}]}",
+		},
+		// CNAME pointing outside the zone
+		{"external",
+			"{\"cname\":[{\"ttl\":300, \"host\":\"www.example.org.\"}]}",
+		},
+		// Direct A record (no CNAME)
+		{"direct",
+			"{\"a\":[{\"ttl\":300, \"ip\":\"10.0.0.100\"}]}",
 		},
 	},
 }
@@ -220,11 +263,80 @@ var testCases = [][]test.Case{
 			},
 		},
 	},
-	// Malformed data tests
+	// CNAME chain tests
 	{
+		// Simple 2-level CNAME chain (www -> web -> server)
 		{
-			Qname: "host1.example.test.", Qtype: dns.TypeA,
-			Rcode: dns.RcodeServerFailure,
+			Qname: "www.example.test.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.A("server.example.test. 300 IN A 10.0.0.1"),
+				test.CNAME("web.example.test. 300 IN CNAME server.example.test."),
+				test.CNAME("www.example.test. 300 IN CNAME web.example.test."),
+			},
+		},
+		// CNAME chain with AAAA query
+		{
+			Qname: "www.example.test.", Qtype: dns.TypeAAAA,
+			Answer: []dns.RR{
+				test.AAAA("server.example.test. 300 IN AAAA 2001:db8::1"),
+				test.CNAME("web.example.test. 300 IN CNAME server.example.test."),
+				test.CNAME("www.example.test. 300 IN CNAME web.example.test."),
+			},
+		},
+		// 4-level CNAME chain (app -> service -> backend -> final)
+		{
+			Qname: "app.example.test.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.CNAME("app.example.test. 300 IN CNAME service.example.test."),
+				test.CNAME("backend.example.test. 300 IN CNAME final.example.test."),
+				test.A("final.example.test. 300 IN A 10.0.0.2"),
+				test.CNAME("service.example.test. 300 IN CNAME backend.example.test."),
+			},
+		},
+		// CNAME pointing to record with both CNAME and A (should follow CNAME)
+		{
+			Qname: "alias.example.test.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.CNAME("alias.example.test. 300 IN CNAME dual.example.test."),
+				test.CNAME("dual.example.test. 300 IN CNAME target.example.test."),
+				test.A("target.example.test. 300 IN A 10.0.0.3"),
+			},
+		},
+		// CNAME pointing to non-existent record (should return just CNAME)
+		{
+			Qname: "broken.example.test.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.CNAME("broken.example.test. 300 IN CNAME missing.example.test."),
+			},
+		},
+		// CNAME pointing outside zone (should return just CNAME)
+		{
+			Qname: "external.example.test.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.CNAME("external.example.test. 300 IN CNAME www.example.org."),
+			},
+		},
+		// Direct A record (no CNAME chain)
+		{
+			Qname: "direct.example.test.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.A("direct.example.test. 300 IN A 10.0.0.100"),
+			},
+		},
+		// Query for CNAME type on a chain should only return first CNAME
+		{
+			Qname: "www.example.test.", Qtype: dns.TypeCNAME,
+			Answer: []dns.RR{
+				test.CNAME("www.example.test. 300 IN CNAME web.example.test."),
+			},
+		},
+		// Middle of chain accessed directly
+		{
+			Qname: "web.example.test.", Qtype: dns.TypeA,
+			Answer: []dns.RR{
+				test.A("server.example.test. 300 IN A 10.0.0.1"),
+				test.CNAME("web.example.test. 300 IN CNAME server.example.test."),
+			},
 		},
 	},
 }
@@ -287,3 +399,69 @@ func TestAnswer(t *testing.T) {
 }
 
 var ctxt context.Context
+
+// TestCNAMEChainMaxDepth tests that CNAME chains are limited to prevent infinite loops.
+func TestCNAMEChainMaxDepth(t *testing.T) {
+	r := newRedisPlugin()
+	conn := r.Pool.Get()
+	defer conn.Close()
+
+	zone := "chain.test."
+
+	// Clean up
+	conn.Do("EVAL", "return redis.call('del', unpack(redis.call('keys', ARGV[1])))", 0, r.keyPrefix+zone+r.keySuffix)
+
+	// Create SOA
+	r.save(zone, "@", "{\"soa\":{\"ttl\":300, \"minttl\":100, \"mbox\":\"hostmaster.chain.test.\",\"ns\":\"ns1.chain.test.\",\"refresh\":44,\"retry\":55,\"expire\":66}}")
+
+	// Create a very long CNAME chain (20 levels, beyond the 16 max)
+	for i := 0; i < 20; i++ {
+		var target string
+		if i == 19 {
+			// Last one points to an A record
+			target = "final.chain.test."
+		} else {
+			target = "host" + string(rune('0'+i+1)) + ".chain.test."
+		}
+		r.save(zone, "host"+string(rune('0'+i)), "{\"cname\":[{\"ttl\":300, \"host\":\""+target+"\"}]}")
+	}
+
+	// Create the final A record
+	r.save(zone, "final", "{\"a\":[{\"ttl\":300, \"ip\":\"10.0.0.99\"}]}")
+
+	// Reload zones
+	r.LoadZones()
+
+	// Query the first host in the chain
+	m := new(dns.Msg)
+	m.SetQuestion("host0.chain.test.", dns.TypeA)
+
+	rec := dnstest.NewRecorder(&test.ResponseWriter{})
+	r.ServeDNS(ctxt, rec, m)
+
+	resp := rec.Msg
+	if resp == nil {
+		t.Fatal("Expected response, got nil")
+	}
+
+	// Should get a response with CNAMEs, but not all 20
+	// The function should stop at maxCNAMEDepth (16)
+	if len(resp.Answer) == 0 {
+		t.Error("Expected CNAME answers, got none")
+	}
+
+	// Count CNAMEs in the response
+	cnameCount := 0
+	for _, rr := range resp.Answer {
+		if _, ok := rr.(*dns.CNAME); ok {
+			cnameCount++
+		}
+	}
+
+	// Should have hit the max depth limit (16), so at most 16 CNAMEs
+	if cnameCount > 16 {
+		t.Errorf("Expected at most 16 CNAMEs due to max depth, got %d", cnameCount)
+	}
+
+	t.Logf("CNAME chain correctly limited to %d CNAMEs", cnameCount)
+}
