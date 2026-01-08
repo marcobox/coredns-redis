@@ -65,6 +65,60 @@ reverse zones is not supported yet
 
 proxy is not supported yet
 
+## fallthrough
+
+The `fallthrough` directive enables the plugin to pass queries for non-existent records to the next plugin in the chain (typically `forward`). This allows for hybrid DNS setups where some records are served from Redis while others are resolved via upstream DNS servers.
+
+### Syntax
+
+~~~
+redis {
+    address localhost:6379
+    fallthrough [ZONES...]
+}
+~~~
+
+* **fallthrough** If a query for a name in one of the zones matches but no record is found, pass the request to the next plugin. If **[ZONES...]** is omitted, then fallthrough happens for all zones for which the plugin is authoritative. If specific zones are listed (e.g., `fallthrough example.com. example.org.`), then fallthrough only happens for those zones.
+
+### Examples
+
+**Enable fallthrough for all zones:**
+
+~~~
+. {
+    redis {
+        address localhost:6379
+        fallthrough
+    }
+    forward . 8.8.8.8
+}
+~~~
+
+In this configuration:
+- Queries matching Redis zones are served from Redis if the record exists
+- Queries for non-existent records in Redis zones are forwarded to 8.8.8.8
+- Queries for zones not in Redis are also forwarded to 8.8.8.8
+
+**Enable fallthrough for specific zones only:**
+
+~~~
+. {
+    redis {
+        address localhost:6379
+        fallthrough example.com. example.net.
+    }
+    forward . 8.8.8.8
+}
+~~~
+
+This configuration only enables fallthrough for `example.com.` and `example.net.` zones. Other zones will return NXDOMAIN if the record doesn't exist in Redis.
+
+### Use Cases
+
+1. **Gradual Migration**: Migrate DNS records to Redis incrementally while keeping existing records in upstream DNS
+2. **Hybrid Setup**: Store custom records in Redis while delegating standard records to upstream DNS
+3. **Dynamic + Static Records**: Combine dynamic records (in Redis) with static records (in upstream DNS)
+
 ## zone format in redis db
 
 ### zones

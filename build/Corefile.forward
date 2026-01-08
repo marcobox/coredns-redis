@@ -1,4 +1,6 @@
 . {
-  import Corefile.base
+  redis {
+    fallthrough
+  }
   forward . {$COREDNS_FORWARD}
 }

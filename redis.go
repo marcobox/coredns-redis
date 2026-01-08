@@ -10,6 +10,7 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/pkg/fall"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 
 	redisCon "github.com/gomodule/redigo/redis"
@@ -30,6 +31,7 @@ type Redis struct {
 	Zones          []string
 	LastZoneUpdate time.Time
 	lastKeyCount   int
+	Fall           fall.F
 }
 
 func (redis *Redis) KeyCount() int {
