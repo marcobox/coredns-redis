@@ -2,6 +2,7 @@ package redis
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -107,7 +108,7 @@ func (redis *Redis) LoadZones() {
 			if _, found := keysSeen[zone]; !found {
 
 				zone = strings.TrimPrefix(zone, redis.keyPrefix)
-				zone = strings.TrimPrefix(zone, redis.keySuffix)
+				zone = strings.TrimSuffix(zone, redis.keySuffix)
 
 				zones = append(zones, zone)
 				keysSeen[zone] = true
@@ -572,8 +573,20 @@ func decodeScanReply(reply interface{}) (scanReply *RedisScanReply, err error) {
 	// Redigo encodes the reply as an interface{}, so here we are converting it to something
 	// useful.  Under the covers, the reply is [][]byte{}.
 
+	// Validate reply is an array with at least 2 elements
+	replyArray, ok := reply.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("SCAN reply is not an array")
+	}
+	if len(replyArray) < 2 {
+		return nil, fmt.Errorf("SCAN reply has invalid length: %d", len(replyArray))
+	}
+
 	// the cursor is []byte encoded in index 0
-	cursorBytes := reply.([]interface{})[0].([]uint8)
+	cursorBytes, ok := replyArray[0].([]uint8)
+	if !ok {
+		return nil, fmt.Errorf("SCAN cursor is not a byte array")
+	}
 	cursor, err := strconv.Atoi(string(cursorBytes))
 	if err != nil {
 		return nil, err
@@ -581,12 +594,17 @@ func decodeScanReply(reply interface{}) (scanReply *RedisScanReply, err error) {
 	scanReply.cursor = cursor
 
 	// keys are []byte encoded starting with index 1
-	for _, value := range reply.([]interface{})[1:] {
-
-		redisKeys := value.([]interface{})
+	for _, value := range replyArray[1:] {
+		redisKeys, ok := value.([]interface{})
+		if !ok {
+			continue // Skip invalid entries
+		}
 		for _, redisKey := range redisKeys {
-
-			zone := string(redisKey.([]uint8))
+			keyBytes, ok := redisKey.([]uint8)
+			if !ok {
+				continue // Skip invalid key entries
+			}
+			zone := string(keyBytes)
 			scanReply.keys = append(scanReply.keys, zone)
 		}
 	}
