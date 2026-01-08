@@ -194,11 +194,66 @@ Each zone is a Redis hash where:
 
 ## Development Notes
 
+### Code Style Guidelines
+
+**Prefer table-driven tests:**
+
+- Use slice of test case structs instead of separate test functions
+- Makes it easy to add new test cases without duplication
+- Provides clear overview of test coverage
+- Example pattern:
+
+```go
+tests := []struct {
+    name     string
+    input    string
+    expected string
+}{
+    {"case1", "input1", "expected1"},
+    {"case2", "input2", "expected2"},
+}
+for _, tt := range tests {
+    t.Run(tt.name, func(t *testing.T) {
+        // test logic
+    })
+}
+```
+
+**Reduce code indentation:**
+
+- Use early returns to avoid nested if/else statements
+- Prefer guard clauses at the start of functions
+- Return errors early instead of wrapping logic in else blocks
+- Use switch statements instead of long if/else chains when appropriate
+- Example of preferred style:
+
+```go
+// Good - early return, flat structure
+if err != nil {
+    return err
+}
+if value == "" {
+    return ErrEmpty
+}
+// main logic here
+
+// Avoid - nested if/else
+if err == nil {
+    if value != "" {
+        // main logic here
+    } else {
+        return ErrEmpty
+    }
+} else {
+    return err
+}
+```
+
 ### Adding New DNS Record Types
 
 1. Add record struct to [types.go](types.go) in the `Record` struct
 2. Implement parsing logic in [redis.go](redis.go) within `ServeDNS()`
-3. Add test cases to [lookup_test.go](lookup_test.go)
+3. Add test cases to [lookup_test.go](lookup_test.go) using table-driven test pattern
 4. Update README.md with JSON format example
 
 ### Modifying Zone Reload Logic

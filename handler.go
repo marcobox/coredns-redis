@@ -9,6 +9,40 @@ import (
 	"github.com/miekg/dns"
 )
 
+// resolveWithCNAME handles A/AAAA queries that may have a CNAME.
+// If a CNAME exists, it returns the CNAME and attempts to resolve the target.
+// The resolver function should be either redis.A or redis.AAAA.
+func (redis *Redis) resolveWithCNAME(qname string, z *Zone, record *Record, resolver func(string, *Zone, *Record) ([]dns.RR, []dns.RR)) ([]dns.RR, []dns.RR) {
+	// No CNAME, return the direct A/AAAA records
+	if len(record.CNAME) == 0 {
+		return resolver(qname, z, record)
+	}
+
+	// Get CNAME record
+	answers, extras := redis.CNAME(qname, z, record)
+	if len(answers) == 0 {
+		return answers, extras
+	}
+
+	// Try to resolve the CNAME target within the same zone
+	cname := answers[0].(*dns.CNAME)
+	targetLocation := redis.findLocation(cname.Target, z)
+	if targetLocation == "" {
+		return answers, extras
+	}
+
+	targetRecord := redis.get(targetLocation, z)
+	if targetRecord == nil {
+		return answers, extras
+	}
+
+	// Append target's A/AAAA records
+	targetAnswers, targetExtras := resolver(cname.Target, z, targetRecord)
+	answers = append(answers, targetAnswers...)
+	extras = append(extras, targetExtras...)
+	return answers, extras
+}
+
 // ServeDNS implements the plugin.Handler interface.
 func (redis *Redis) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 	state := request.Request{W: w, Req: r}
@@ -77,45 +111,9 @@ func (redis *Redis) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 
 	switch qtype {
 	case "A":
-		// Check for CNAME first - if present, return CNAME and follow it
-		if len(record.CNAME) > 0 {
-			answers, extras = redis.CNAME(qname, z, record)
-			// Try to resolve the CNAME target to get the A record
-			if len(answers) > 0 {
-				cname := answers[0].(*dns.CNAME)
-				targetLocation := redis.findLocation(cname.Target, z)
-				if len(targetLocation) > 0 {
-					targetRecord := redis.get(targetLocation, z)
-					if targetRecord != nil {
-						aAnswers, aExtras := redis.A(cname.Target, z, targetRecord)
-						answers = append(answers, aAnswers...)
-						extras = append(extras, aExtras...)
-					}
-				}
-			}
-		} else {
-			answers, extras = redis.A(qname, z, record)
-		}
+		answers, extras = redis.resolveWithCNAME(qname, z, record, redis.A)
 	case "AAAA":
-		// Check for CNAME first - if present, return CNAME and follow it
-		if len(record.CNAME) > 0 {
-			answers, extras = redis.CNAME(qname, z, record)
-			// Try to resolve the CNAME target to get the AAAA record
-			if len(answers) > 0 {
-				cname := answers[0].(*dns.CNAME)
-				targetLocation := redis.findLocation(cname.Target, z)
-				if len(targetLocation) > 0 {
-					targetRecord := redis.get(targetLocation, z)
-					if targetRecord != nil {
-						aaaaAnswers, aaaaExtras := redis.AAAA(cname.Target, z, targetRecord)
-						answers = append(answers, aaaaAnswers...)
-						extras = append(extras, aaaaExtras...)
-					}
-				}
-			}
-		} else {
-			answers, extras = redis.AAAA(qname, z, record)
-		}
+		answers, extras = redis.resolveWithCNAME(qname, z, record, redis.AAAA)
 	case "CNAME":
 		answers, extras = redis.CNAME(qname, z, record)
 	case "TXT":
