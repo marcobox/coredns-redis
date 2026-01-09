@@ -12,8 +12,9 @@ import (
 // resolveWithCNAME handles A/AAAA queries that may have a CNAME.
 // If a CNAME exists, it returns the CNAME and attempts to resolve the target.
 // It follows CNAME chains within the same zone up to a maximum depth.
+// If a CNAME points outside the zone and a forward plugin is configured, it resolves the external target.
 // The resolver function should be either redis.A or redis.AAAA.
-func (redis *Redis) resolveWithCNAME(qname string, z *Zone, record *Record, resolver func(string, *Zone, *Record) ([]dns.RR, []dns.RR)) ([]dns.RR, []dns.RR) {
+func (redis *Redis) resolveWithCNAME(ctx context.Context, w dns.ResponseWriter, qname string, qtype uint16, z *Zone, record *Record, resolver func(string, *Zone, *Record) ([]dns.RR, []dns.RR)) ([]dns.RR, []dns.RR) {
 	// No CNAME, return the direct A/AAAA records
 	if len(record.CNAME) == 0 {
 		return resolver(qname, z, record)
@@ -49,7 +50,12 @@ func (redis *Redis) resolveWithCNAME(qname string, z *Zone, record *Record, reso
 		// Try to resolve the CNAME target within the same zone
 		targetLocation := redis.findLocation(cname.Target, z)
 		if targetLocation == "" {
-			// CNAME points outside zone, stop here
+			// CNAME points outside zone
+			// If we have a forward plugin, try to resolve the external target
+			if redis.Next != nil {
+				externalAnswers := redis.resolveExternal(ctx, w, cname.Target, qtype)
+				answers = append(answers, externalAnswers...)
+			}
 			return answers, extras
 		}
 
@@ -138,9 +144,9 @@ func (redis *Redis) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 
 	switch qtype {
 	case "A":
-		answers, extras = redis.resolveWithCNAME(qname, z, record, redis.A)
+		answers, extras = redis.resolveWithCNAME(ctx, w, qname, dns.TypeA, z, record, redis.A)
 	case "AAAA":
-		answers, extras = redis.resolveWithCNAME(qname, z, record, redis.AAAA)
+		answers, extras = redis.resolveWithCNAME(ctx, w, qname, dns.TypeAAAA, z, record, redis.AAAA)
 	case "CNAME":
 		answers, extras = redis.CNAME(qname, z, record)
 	case "TXT":
@@ -171,6 +177,41 @@ func (redis *Redis) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 	m = state.Scrub(m)
 	_ = w.WriteMsg(m)
 	return dns.RcodeSuccess, nil
+}
+
+// ResponseRecorder is a dns.ResponseWriter that captures the response message
+type ResponseRecorder struct {
+	dns.ResponseWriter
+	msg *dns.Msg
+}
+
+// WriteMsg captures the DNS response message
+func (r *ResponseRecorder) WriteMsg(msg *dns.Msg) error {
+	r.msg = msg
+	return nil
+}
+
+// resolveExternal queries the next plugin (typically forward) to resolve an external target
+func (redis *Redis) resolveExternal(ctx context.Context, w dns.ResponseWriter, target string, qtype uint16) []dns.RR {
+	if redis.Next == nil {
+		return nil
+	}
+
+	// Create a new DNS query for the external target
+	req := new(dns.Msg)
+	req.SetQuestion(target, qtype)
+
+	// Use ResponseRecorder to capture the response
+	rec := &ResponseRecorder{ResponseWriter: w}
+
+	// Query the next plugin (forward)
+	plugin.NextOrFailure(target, redis.Next, ctx, rec, req)
+
+	// Return the answers from the captured response
+	if rec.msg != nil {
+		return rec.msg.Answer
+	}
+	return nil
 }
 
 // Name implements the Handler interface.

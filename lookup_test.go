@@ -465,3 +465,235 @@ func TestCNAMEChainMaxDepth(t *testing.T) {
 
 	t.Logf("CNAME chain correctly limited to %d CNAMEs", cnameCount)
 }
+
+// mockForwardPlugin is a mock plugin that simulates the forward plugin
+// It resolves external CNAMEs and A records
+type mockForwardPlugin struct{}
+
+func (m mockForwardPlugin) Name() string { return "mock-forward" }
+
+func (m mockForwardPlugin) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
+	resp := new(dns.Msg)
+	resp.SetReply(r)
+
+	// Mock resolution for external.example.org
+	if r.Question[0].Name == "external.example.org." {
+		switch r.Question[0].Qtype {
+		case dns.TypeA:
+			rr := &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   "external.example.org.",
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    300,
+				},
+				A: []byte{10, 20, 30, 40},
+			}
+			resp.Answer = append(resp.Answer, rr)
+		case dns.TypeAAAA:
+			rr := &dns.AAAA{
+				Hdr: dns.RR_Header{
+					Name:   "external.example.org.",
+					Rrtype: dns.TypeAAAA,
+					Class:  dns.ClassINET,
+					Ttl:    300,
+				},
+				AAAA: []byte{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x99},
+			}
+			resp.Answer = append(resp.Answer, rr)
+		}
+	}
+
+	w.WriteMsg(resp)
+	return dns.RcodeSuccess, nil
+}
+
+// TestExternalCNAMEResolution tests that external CNAMEs are resolved
+// when a forward plugin is configured
+func TestExternalCNAMEResolution(t *testing.T) {
+	r := newRedisPlugin()
+
+	// Set up mock forward plugin
+	r.Next = mockForwardPlugin{}
+
+	conn := r.Pool.Get()
+	defer conn.Close()
+
+	zone := "external.test."
+
+	// Clean up
+	conn.Do("EVAL", "return redis.call('del', unpack(redis.call('keys', ARGV[1])))", 0, r.keyPrefix+zone+r.keySuffix)
+
+	// Create SOA
+	r.save(zone, "@", "{\"soa\":{\"ttl\":300, \"minttl\":100, \"mbox\":\"hostmaster.external.test.\",\"ns\":\"ns1.external.test.\",\"refresh\":44,\"retry\":55,\"expire\":66}}")
+
+	// Create a CNAME pointing outside the zone
+	r.save(zone, "app", "{\"cname\":[{\"ttl\":300, \"host\":\"external.example.org.\"}]}")
+
+	// Reload zones
+	r.LoadZones()
+
+	tests := []struct {
+		name         string
+		qname        string
+		qtype        uint16
+		wantCNAME    bool
+		wantA        bool
+		wantAAAA     bool
+		cnameTarget  string
+		aIP          string
+		aaaaIP       string
+	}{
+		{
+			name:        "External CNAME with A resolution",
+			qname:       "app.external.test.",
+			qtype:       dns.TypeA,
+			wantCNAME:   true,
+			wantA:       true,
+			cnameTarget: "external.example.org.",
+			aIP:         "10.20.30.40",
+		},
+		{
+			name:        "External CNAME with AAAA resolution",
+			qname:       "app.external.test.",
+			qtype:       dns.TypeAAAA,
+			wantCNAME:   true,
+			wantAAAA:    true,
+			cnameTarget: "external.example.org.",
+			aaaaIP:      "2001:db8::99",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := new(dns.Msg)
+			m.SetQuestion(tt.qname, tt.qtype)
+
+			rec := dnstest.NewRecorder(&test.ResponseWriter{})
+			r.ServeDNS(ctxt, rec, m)
+
+			resp := rec.Msg
+			if resp == nil {
+				t.Fatal("Expected response, got nil")
+			}
+
+			if len(resp.Answer) == 0 {
+				t.Error("Expected answers, got none")
+				return
+			}
+
+			// Verify CNAME is present
+			if tt.wantCNAME {
+				foundCNAME := false
+				for _, rr := range resp.Answer {
+					if cname, ok := rr.(*dns.CNAME); ok {
+						if cname.Target == tt.cnameTarget {
+							foundCNAME = true
+							break
+						}
+					}
+				}
+				if !foundCNAME {
+					t.Errorf("Expected CNAME to %s, not found in response", tt.cnameTarget)
+				}
+			}
+
+			// Verify A record is present (external resolution)
+			if tt.wantA {
+				foundA := false
+				for _, rr := range resp.Answer {
+					if a, ok := rr.(*dns.A); ok {
+						if a.A.String() == tt.aIP {
+							foundA = true
+							break
+						}
+					}
+				}
+				if !foundA {
+					t.Errorf("Expected A record with IP %s (from external resolution), not found", tt.aIP)
+					t.Logf("Response answers: %v", resp.Answer)
+				}
+			}
+
+			// Verify AAAA record is present (external resolution)
+			if tt.wantAAAA {
+				foundAAAA := false
+				for _, rr := range resp.Answer {
+					if aaaa, ok := rr.(*dns.AAAA); ok {
+						if aaaa.AAAA.String() == tt.aaaaIP {
+							foundAAAA = true
+							break
+						}
+					}
+				}
+				if !foundAAAA {
+					t.Errorf("Expected AAAA record with IP %s (from external resolution), not found", tt.aaaaIP)
+					t.Logf("Response answers: %v", resp.Answer)
+				}
+			}
+		})
+	}
+}
+
+// TestExternalCNAMEWithoutForwardPlugin tests that external CNAMEs
+// only return the CNAME when no forward plugin is configured
+func TestExternalCNAMEWithoutForwardPlugin(t *testing.T) {
+	r := newRedisPlugin()
+
+	// Explicitly set Next to nil (no forward plugin)
+	r.Next = nil
+
+	conn := r.Pool.Get()
+	defer conn.Close()
+
+	zone := "noforward.test."
+
+	// Clean up
+	conn.Do("EVAL", "return redis.call('del', unpack(redis.call('keys', ARGV[1])))", 0, r.keyPrefix+zone+r.keySuffix)
+
+	// Create SOA
+	r.save(zone, "@", "{\"soa\":{\"ttl\":300, \"minttl\":100, \"mbox\":\"hostmaster.noforward.test.\",\"ns\":\"ns1.noforward.test.\",\"refresh\":44,\"retry\":55,\"expire\":66}}")
+
+	// Create a CNAME pointing outside the zone
+	r.save(zone, "app", "{\"cname\":[{\"ttl\":300, \"host\":\"external.example.org.\"}]}")
+
+	// Reload zones
+	r.LoadZones()
+
+	m := new(dns.Msg)
+	m.SetQuestion("app.noforward.test.", dns.TypeA)
+
+	rec := dnstest.NewRecorder(&test.ResponseWriter{})
+	r.ServeDNS(ctxt, rec, m)
+
+	resp := rec.Msg
+	if resp == nil {
+		t.Fatal("Expected response, got nil")
+	}
+
+	if len(resp.Answer) == 0 {
+		t.Error("Expected CNAME answer, got none")
+		return
+	}
+
+	// Should only have CNAME, no A record
+	cnameCount := 0
+	aCount := 0
+
+	for _, rr := range resp.Answer {
+		switch rr.(type) {
+		case *dns.CNAME:
+			cnameCount++
+		case *dns.A:
+			aCount++
+		}
+	}
+
+	if cnameCount != 1 {
+		t.Errorf("Expected exactly 1 CNAME, got %d", cnameCount)
+	}
+
+	if aCount != 0 {
+		t.Errorf("Expected no A records (no forward plugin), got %d", aCount)
+	}
+}

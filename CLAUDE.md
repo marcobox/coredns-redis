@@ -281,6 +281,67 @@ redis-cli HSET "test.local." "@" '{"soa":{"ttl":300,"minttl":100,"mbox":"admin.t
 3. Build and run CoreDNS with the plugin
 4. Query: `dig @localhost test.local A`
 
+## Advanced Features
+
+### Fallthrough Support
+
+The plugin supports the `fallthrough` directive to enable hybrid DNS setups. When a record doesn't exist in Redis, the query is forwarded to the next plugin in the chain (typically `forward`).
+
+**Configuration:**
+
+```corefile
+redis {
+    address localhost:6379
+    fallthrough  # Forward missing records to next plugin
+}
+forward . 8.8.8.8
+```
+
+**Use cases:**
+
+- Gradual migration from existing DNS to Redis
+- Hybrid setup with dynamic records in Redis and static records upstream
+- Split-horizon DNS with Redis overrides
+
+See [README.md](README.md#fallthrough) for detailed documentation.
+
+### External CNAME Resolution
+
+When a CNAME record in Redis points to a target outside the zone, the plugin automatically resolves the external target if a forward plugin is configured.
+
+**How it works:**
+
+1. Redis plugin returns the CNAME record
+2. Plugin detects the CNAME target is external
+3. Queries the forward plugin to resolve the external target
+4. Returns both the CNAME and the final A/AAAA records in one response
+
+**Example:**
+
+```bash
+# Redis has: app.example.com CNAME external.example.org
+# Without external resolution:
+dig @localhost app.example.com A
+# Returns: app.example.com. 60 IN CNAME external.example.org.
+
+# With external resolution (forward plugin configured):
+dig @localhost app.example.com A
+# Returns:
+# app.example.com. 60 IN CNAME external.example.org.
+# external.example.org. 300 IN A 10.20.30.40
+```
+
+**Implementation:**
+
+- [handler.go:189-209](handler.go#L189-L209) - `resolveExternal()` method queries the next plugin
+- [handler.go:176-186](handler.go#L176-L186) - `ResponseRecorder` captures responses from forward plugin
+- [handler.go:52-58](handler.go#L52-L58) - Modified `resolveWithCNAME()` calls `resolveExternal()` for external targets
+
+**Testing:**
+
+- [lookup_test.go:511-636](lookup_test.go#L511-L636) - `TestExternalCNAMEResolution` validates external resolution
+- [lookup_test.go:638-699](lookup_test.go#L638-L699) - `TestExternalCNAMEWithoutForwardPlugin` validates fallback behavior
+
 ## Known Limitations
 
 - **Reverse zones not supported** - PTR records for reverse DNS lookups are not implemented
