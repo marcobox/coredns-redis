@@ -262,7 +262,7 @@ func TestLoadZonesWithPrefixAndSuffix(t *testing.T) {
 	// Add zones with various combinations
 	s.HSet("prod:example.com.:v1", "@", `{"a":[{"ttl":300,"ip":"1.2.3.4"}]}`)
 	s.HSet("prod:example.net.:v1", "@", `{"a":[{"ttl":300,"ip":"5.6.7.8"}]}`)
-	s.HSet("prod:example.org.", "@", `{"a":[{"ttl":300,"ip":"9.10.11.12"}]}`)      // no suffix
+	s.HSet("prod:example.org.", "@", `{"a":[{"ttl":300,"ip":"9.10.11.12"}]}`)     // no suffix
 	s.HSet("dev:example.test.:v1", "@", `{"a":[{"ttl":300,"ip":"13.14.15.16"}]}`) // wrong prefix
 
 	r := &Redis{
@@ -331,7 +331,7 @@ func TestServeDNSWithMalformedJSON(t *testing.T) {
 	defer s.Close()
 
 	// Add zone with malformed JSON
-	s.HSet("example.com.", "@", `{"a":[{"ttl":300,"ip":"1.2.3.4"}`)  // missing closing braces
+	s.HSet("example.com.", "@", `{"a":[{"ttl":300,"ip":"1.2.3.4"}`) // missing closing braces
 	s.HSet("example.com.", "bad", `not json at all`)
 
 	r := &Redis{

@@ -5,5 +5,31 @@
       "Read(./.gemini/**)",
       "Read(./.geminiignore)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./lint.sh",
+            "statusMessage": "Running linter after write...",
+            "timeout": 120
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./lint.sh",
+            "statusMessage": "Running linter after edit...",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
   }
 }

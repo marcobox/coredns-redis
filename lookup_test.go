@@ -534,15 +534,15 @@ func TestExternalCNAMEResolution(t *testing.T) {
 	r.LoadZones()
 
 	tests := []struct {
-		name         string
-		qname        string
-		qtype        uint16
-		wantCNAME    bool
-		wantA        bool
-		wantAAAA     bool
-		cnameTarget  string
-		aIP          string
-		aaaaIP       string
+		name        string
+		qname       string
+		qtype       uint16
+		wantCNAME   bool
+		wantA       bool
+		wantAAAA    bool
+		cnameTarget string
+		aIP         string
+		aaaaIP      string
 	}{
 		{
 			name:        "External CNAME with A resolution",
